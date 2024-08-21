@@ -71,6 +71,57 @@ class Packet:
     aux_byte: int = 0x00
     checksum: int = 0x0000
 
+    def serialize(self, checksum=None) -> bytes:
+        out = struct.pack(
+            PACKET_FORMAT,
+            0xAA if self.need_checksum else 0xAD,
+            self.device_id,
+            (int(self.need_ack) << 7) | self.function_code,
+            self.data_length,
+            self.data,
+            self.aux_byte,
+            checksum if checksum is not None else 0xFFFF,
+            0xCC
+        )
+
+        if checksum is None and packet.need_checksum:
+            checksum = crc16(out[1:-3])
+            return self.serialize(checksum)
+
+        return out
+
+    @staticmethod
+    def deserialize(buffer: bytes) -> 'Packet':
+        (
+            start_of_message,
+            device_id,
+            control_word,
+            data_length,
+            data,
+            aux_byte,
+            checksum,
+            end_of_message
+        ) = struct.unpack(PACKET_FORMAT, buffer)
+
+        assert start_of_message in (0xAA, 0xAC, 0xAD)  # TODO: What is 0xAC?
+        assert end_of_message == 0xCC
+
+        need_checksum = (start_of_message == 0xAA)
+        need_ack = bool(control_word & 0x80)
+        function_code = control_word & 0x7F
+
+        return Packet(
+            device_id,
+            function_code,
+            data_length,
+            data,
+            need_checksum,
+            need_ack,
+            aux_byte,
+            checksum
+        )
+
+
 def crc16(data: bytes, poly: int = 0xA001):
     crc = 0xFFFF
     for byte in data:
@@ -78,56 +129,6 @@ def crc16(data: bytes, poly: int = 0xA001):
         for _ in range(8):
             crc = (crc >> 1) ^ poly if (crc & 1) else crc >> 1
     return crc
-
-def parse_packet(packet_bytes: bytes):
-    (
-        start_of_message,
-        device_id,
-        control_word,
-        data_length,
-        data,
-        aux_byte,
-        checksum,
-        end_of_message
-    ) = struct.unpack(PACKET_FORMAT, packet_bytes)
-
-    assert start_of_message in (0xAA, 0xAC, 0xAD)  # TODO: What is 0xAC?
-    assert end_of_message == 0xCC
-
-    need_checksum = (start_of_message == 0xAA)
-    need_ack = bool(control_word & 0x80)
-    function_code = control_word & 0x7F
-
-    return Packet(
-        device_id,
-        function_code,
-        data_length,
-        data,
-        need_checksum,
-        need_ack,
-        aux_byte,
-        checksum
-    )
-
-
-def serialize_packet(packet: Packet, checksum=None):
-    serialized = struct.pack(
-        PACKET_FORMAT,
-        0xAA if packet.need_checksum else 0xAD,
-        packet.device_id,
-        (int(packet.need_ack) << 7) | packet.function_code,
-        packet.data_length,
-        packet.data,
-        packet.aux_byte,
-        checksum if checksum is not None else 0xFF,
-        0xCC
-    )
-
-    if checksum is None and packet.need_checksum:
-        checksum = crc16(serialized[1:-3])
-        return serialize_packet(packet, checksum)
-
-    return serialized
 
 
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -139,7 +140,7 @@ clients = []
 print("[*] Listening on port 8888...")
 
 def write_packet(s, p):
-    serialized = serialize_packet(p)
+    serialized = p.serialize()
     print(f'[*] Sending {p} => {serialized.hex()}')
     s.send(serialized)
 
@@ -160,7 +161,7 @@ while True:
             clients.remove(s)
             continue
 
-        packet = parse_packet(data)
+        packet = Packet.deserialize(data)
         print(f"[*] Received packet: {packet} => {data.hex()}")
 
         if packet.need_checksum and crc16(data[1:-3]) != packet.checksum:
