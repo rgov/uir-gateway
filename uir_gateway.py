@@ -234,43 +234,48 @@ class UIDevice:
             ))
 
 
-server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-server.bind(('0.0.0.0', 8888))
-server.listen()
-clients: list[socket.socket] = []
+def main():
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(('0.0.0.0', 8888))
+    server.listen()
+    clients: list[socket.socket] = []
 
-devices: list[UIDevice] = [
-    UIDevice(
-        node_id = GatewayNodeID.UIM2523
-    ),
-]
+    devices: list[UIDevice] = [
+        UIDevice(
+            node_id = GatewayNodeID.UIM2523
+        ),
+    ]
 
-print("[*] Listening on port 8888...")
+    print('[*] Listening on port 8888...')
 
 
-while True:
-    readable, _, _ = select.select([server] + clients, [], [])
-    for s in readable:
-        if s is server:
-            client, addr = s.accept()
-            clients.append(client)
-            print(f"[*] Connection from {addr}")
-            continue
+    while True:
+        readable, _, _ = select.select([server] + clients, [], [])
+        for s in readable:
+            if s is server:
+                client, addr = s.accept()
+                clients.append(client)
+                print(f'[*] Connection from {addr}')
+                continue
 
-        packet = s.recv(PACKET_LENGTH)
-        if not packet:  # TODO: Handle partial packets
-            print("[*] Connection closed")
-            s.close()
-            clients.remove(s)
-            continue
+            packet = s.recv(PACKET_LENGTH)
+            if not packet:  # TODO: Handle partial packets
+                print('[*] Connection closed')
+                s.close()
+                clients.remove(s)
+                continue
 
-        msg = UIMessage.deserialize(packet)
-        print(f"[*] Received message: {msg} => {packet.hex()}")
+            msg = UIMessage.deserialize(packet)
+            print(f'[*] Received message: {msg} => {packet.hex()}')
 
-        if msg.need_checksum and crc16(packet[1:-3]) != msg.checksum:
-            print(f"[-] Message has invalid checksum, ignoring")
-            continue
+            if msg.need_checksum and crc16(packet[1:-3]) != msg.checksum:
+                print(f'[-] Message has invalid checksum, ignoring')
+                continue
 
-        for device in devices:
-            device.handle_message(s, msg)
+            for device in devices:
+                device.handle_message(s, msg)
+
+
+if __name__ == '__main__':
+    main()
