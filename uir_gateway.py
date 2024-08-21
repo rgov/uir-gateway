@@ -79,7 +79,7 @@ vendor_id = 0x4242
 
 
 @dataclass
-class Packet:
+class UIMessage:
     device_id: int
     function_code: int | FunctionCode
     data_length: int
@@ -102,14 +102,14 @@ class Packet:
             0xCC
         )
 
-        if checksum is None and packet.need_checksum:
+        if checksum is None and msg.need_checksum:
             checksum = crc16(out[1:-3])
             return self.serialize(checksum)
 
         return out
 
     @staticmethod
-    def deserialize(buffer: bytes) -> 'Packet':
+    def deserialize(packet: bytes) -> 'UIMessage':
         (
             start_of_message,
             device_id,
@@ -119,7 +119,7 @@ class Packet:
             aux_byte,
             checksum,
             end_of_message
-        ) = struct.unpack(PACKET_FORMAT, buffer)
+        ) = struct.unpack(PACKET_FORMAT, packet)
 
         assert start_of_message in (0xAA, 0xAC, 0xAD)  # TODO: What is 0xAC?
         assert end_of_message == 0xCC
@@ -131,7 +131,7 @@ class Packet:
         # not be a member of the subset we have defined.
         function_code = control_word & 0x7F
 
-        return Packet(
+        return UIMessage(
             device_id,
             function_code,
             data_length,
@@ -160,9 +160,9 @@ clients = []
 
 print("[*] Listening on port 8888...")
 
-def write_packet(s, p):
-    serialized = p.serialize()
-    print(f'[*] Sending {p} => {serialized.hex()}')
+def send_message(s, msg):
+    serialized = msg.serialize()
+    print(f'[*] Sending {msg} => {serialized.hex()}')
     s.send(serialized)
 
 
@@ -175,28 +175,28 @@ while True:
             print(f"[*] Connection from {addr}")
             continue
 
-        data = s.recv(PACKET_LENGTH)
-        if not data:  # TODO: Handle partial packets
+        packet = s.recv(PACKET_LENGTH)
+        if not packet:  # TODO: Handle partial packets
             print("[*] Connection closed")
             s.close()
             clients.remove(s)
             continue
 
-        packet = Packet.deserialize(data)
-        print(f"[*] Received packet: {packet} => {data.hex()}")
+        msg = UIMessage.deserialize(packet)
+        print(f"[*] Received message: {msg} => {packet.hex()}")
 
-        if packet.need_checksum and crc16(data[1:-3]) != packet.checksum:
-            print(f"[-] Packet has invalid checksum, ignoring")
+        if msg.need_checksum and crc16(packet[1:-3]) != msg.checksum:
+            print(f"[-] Message has invalid checksum, ignoring")
             continue
 
-        if packet.device_id not in (0, gateway_node_id):
-            print(f'[*] Ignoring packet not addressed to us')
+        if msg.device_id not in (0, gateway_node_id):
+            print(f'[*] Ignoring message not addressed to us')
             continue
 
-        if packet.function_code == FunctionCode.MODEL:
+        if msg.function_code == FunctionCode.MODEL:
             print('[*] Responding to GET MODEL command')
-            assert packet.need_ack
-            write_packet(s, Packet(
+            assert msg.need_ack
+            send_message(s, UIMessage(
                 device_id = gateway_node_id,
                 function_code = FunctionCode.MODEL,
                 data_length = 8,
@@ -205,13 +205,13 @@ while True:
                 )
             ))
 
-        if packet.function_code == FunctionCode.PROTOCOL_PARAMETER:
-            index = packet.data[0]
+        if msg.function_code == FunctionCode.PROTOCOL_PARAMETER:
+            index = msg.data[0]
             if index == ProtocolParameter.CAN_BITRATE:
-                if packet.data_length == 1:
+                if msg.data_length == 1:
                     print('[*] Responding to GET CAN BITRATE command')
-                elif packet.data_length == 2:
-                    _, bitrate, = struct.unpack_from('<BB', packet.data)
+                elif msg.data_length == 2:
+                    _, bitrate, = struct.unpack_from('<BB', msg.data)
                     print('[*] Set bitrate to', bitrate)  # TODO: user friendly
 
                     print('[*] Acknowledging SET CAN BITRATE command')
@@ -219,7 +219,7 @@ while True:
                     print('[-] Invalid length on PP command, ignoring')
                     continue
 
-                write_packet(s, Packet(
+                send_message(s, UIMessage(
                     device_id = gateway_node_id,
                     function_code = FunctionCode.PROTOCOL_PARAMETER,
                     data_length = 2,
@@ -232,18 +232,18 @@ while True:
                 raise NotImplementedError(f'Protocol parameter {index} not implemented')
 
 
-        if packet.function_code == FunctionCode.SERIAL_NUMBER:
-            if packet.need_ack:
+        if msg.function_code == FunctionCode.SERIAL_NUMBER:
+            if msg.need_ack:
                 print('[*] Responding to GET SERIAL NUMBER command')
             else:
-                assert packet.data_length == struct.calcsize('<L')
-                serial_number, = struct.unpack_from('<L', packet.data)
+                assert msg.data_length == struct.calcsize('<L')
+                serial_number, = struct.unpack_from('<L', msg.data)
                 print('[*] Set serial number to', serial_number)
 
                 # Not documented, but I think we should acknowledge
                 print('[*] Acknowledging SET SERIAL NUMBER command')
 
-            write_packet(s, Packet(
+            send_message(s, UIMessage(
                 device_id = gateway_node_id,
                 function_code = FunctionCode.SERIAL_NUMBER,
                 data_length = 8,
