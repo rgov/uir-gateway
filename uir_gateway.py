@@ -1,9 +1,8 @@
+import dataclasses
 import enum
 import select
 import socket
 import struct
-
-from dataclasses import dataclass
 
 
 PACKET_FORMAT = '<BBBB8sBHB'
@@ -72,14 +71,7 @@ class CANBitrate(enum.IntEnum):
     KBPS_125 = 4
 
 
-gateway_node_id = GatewayNodeID.UIM2523
-can_bitrate = CANBitrate.KBPS_500
-serial_number = 1234512345
-manufacturer_id = 0x4141
-vendor_id = 0x4242
-
-
-@dataclass
+@dataclasses.dataclass
 class UIMessage:
     device_id: int
     function_code: int | FunctionCode
@@ -153,18 +145,108 @@ def crc16(data: bytes, poly: int = 0xA001) -> int:
     return crc
 
 
+def send_message(s: socket.socket, msg: UIMessage) -> None:
+    serialized = msg.serialize()
+    print(f'[*] Sending {msg} => {serialized.hex()}')
+    s.send(serialized)
+
+
+@dataclasses.dataclass
+class UIDevice:
+    node_id: int
+    group_ids: list[int] = dataclasses.field(default_factory=list)
+    can_bitrate: int | CANBitrate = CANBitrate.KBPS_500
+    serial_number: int = 1234512345
+    manufacturer_id: int = 0x4141
+    vendor_id: int = 0x4242
+
+    def __post_init__(self) -> None:
+        if not self.group_ids:
+            self.group_ids = [0, self.node_id]
+
+    def handle_message(self, transport: socket.socket, msg: UIMessage) -> None:
+        if msg.device_id not in self.group_ids:
+            print(f'[*] Ignoring message not addressed to us')
+            return
+
+        if msg.function_code == FunctionCode.MODEL:
+            print('[*] Responding to GET MODEL command')
+            assert msg.need_ack
+            send_message(s, UIMessage(
+                device_id = self.node_id,
+                function_code = FunctionCode.MODEL,
+                data_length = 8,
+                data = (GatewayModel.UIM2523 + bytes([
+                    0x00, 0x00,  # reserved
+                    0x69, 0x7A,  # firmware version
+                    0x00, 0x00,  # reserved
+                ]))
+            ))
+
+        if msg.function_code == FunctionCode.PROTOCOL_PARAMETER:
+            index = msg.data[0]
+            if index == ProtocolParameter.CAN_BITRATE:
+                if msg.data_length == 1:
+                    print('[*] Responding to GET CAN BITRATE command')
+                elif msg.data_length == 2:
+                    _, bitrate, = struct.unpack_from('<BB', msg.data)
+                    print('[*] Set bitrate to', bitrate)  # TODO: user friendly
+
+                    print('[*] Acknowledging SET CAN BITRATE command')
+                else:
+                    print('[-] Invalid length on PP command, ignoring')
+                    return
+
+                send_message(s, UIMessage(
+                    device_id = self.node_id,
+                    function_code = FunctionCode.PROTOCOL_PARAMETER,
+                    data_length = 2,
+                    data = bytes([
+                        ProtocolParameter.CAN_BITRATE, self.can_bitrate,
+                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+                    ])
+                ))
+            else:
+                raise NotImplementedError(f'Protocol parameter {index} not implemented')
+
+
+        if msg.function_code == FunctionCode.SERIAL_NUMBER:
+            if msg.need_ack:
+                print('[*] Responding to GET SERIAL NUMBER command')
+            else:
+                assert msg.data_length == struct.calcsize('<L')
+                serial_number, = struct.unpack_from('<L', msg.data)
+                print('[*] Set serial number to', serial_number)
+
+                # Not documented, but I think we should acknowledge
+                print('[*] Acknowledging SET SERIAL NUMBER command')
+
+            send_message(s, UIMessage(
+                device_id = self.node_id,
+                function_code = FunctionCode.SERIAL_NUMBER,
+                data_length = 8,
+                data = struct.pack(
+                    '<LHH',
+                    self.serial_number,
+                    self.manufacturer_id,
+                    self.vendor_id
+                )
+            ))
+
+
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 server.bind(('0.0.0.0', 8888))
 server.listen()
 clients: list[socket.socket] = []
 
-print("[*] Listening on port 8888...")
+devices: list[UIDevice] = [
+    UIDevice(
+        node_id = GatewayNodeID.UIM2523
+    ),
+]
 
-def send_message(s: socket.socket, msg: UIMessage) -> None:
-    serialized = msg.serialize()
-    print(f'[*] Sending {msg} => {serialized.hex()}')
-    s.send(serialized)
+print("[*] Listening on port 8888...")
 
 
 while True:
@@ -190,66 +272,5 @@ while True:
             print(f"[-] Message has invalid checksum, ignoring")
             continue
 
-        if msg.device_id not in (0, gateway_node_id):
-            print(f'[*] Ignoring message not addressed to us')
-            continue
-
-        if msg.function_code == FunctionCode.MODEL:
-            print('[*] Responding to GET MODEL command')
-            assert msg.need_ack
-            send_message(s, UIMessage(
-                device_id = gateway_node_id,
-                function_code = FunctionCode.MODEL,
-                data_length = 8,
-                data = (GatewayModel.UIM2523 + bytes([
-                    0x00, 0x00,  # reserved
-                    0x69, 0x7A,  # firmware version
-                    0x00, 0x00,  # reserved
-                ]))
-            ))
-
-        if msg.function_code == FunctionCode.PROTOCOL_PARAMETER:
-            index = msg.data[0]
-            if index == ProtocolParameter.CAN_BITRATE:
-                if msg.data_length == 1:
-                    print('[*] Responding to GET CAN BITRATE command')
-                elif msg.data_length == 2:
-                    _, bitrate, = struct.unpack_from('<BB', msg.data)
-                    print('[*] Set bitrate to', bitrate)  # TODO: user friendly
-
-                    print('[*] Acknowledging SET CAN BITRATE command')
-                else:
-                    print('[-] Invalid length on PP command, ignoring')
-                    continue
-
-                send_message(s, UIMessage(
-                    device_id = gateway_node_id,
-                    function_code = FunctionCode.PROTOCOL_PARAMETER,
-                    data_length = 2,
-                    data = bytes([
-                        ProtocolParameter.CAN_BITRATE, can_bitrate,
-                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-                    ])
-                ))
-            else:
-                raise NotImplementedError(f'Protocol parameter {index} not implemented')
-
-
-        if msg.function_code == FunctionCode.SERIAL_NUMBER:
-            if msg.need_ack:
-                print('[*] Responding to GET SERIAL NUMBER command')
-            else:
-                assert msg.data_length == struct.calcsize('<L')
-                serial_number, = struct.unpack_from('<L', msg.data)
-                print('[*] Set serial number to', serial_number)
-
-                # Not documented, but I think we should acknowledge
-                print('[*] Acknowledging SET SERIAL NUMBER command')
-
-            send_message(s, UIMessage(
-                device_id = gateway_node_id,
-                function_code = FunctionCode.SERIAL_NUMBER,
-                data_length = 8,
-                data = struct.pack('<LHH', serial_number, manufacturer_id,
-                                    vendor_id)
-            ))
+        for device in devices:
+            device.handle_message(s, msg)
