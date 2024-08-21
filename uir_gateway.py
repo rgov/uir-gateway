@@ -205,7 +205,7 @@ while True:
                     need_checksum = True,
                     device_id = gateway_node_id,
                     need_ack = False,
-                    function_code = FC_MODEL,
+                    function_code = FC_PROTOCOL_PARAMETER,
                     data_length = 2,
                     data = bytes([
                         PP_CAN_BITRATE, can_bitrate,
