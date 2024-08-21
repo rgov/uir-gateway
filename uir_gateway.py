@@ -90,7 +90,7 @@ class UIMessage:
     aux_byte: int = 0x00
     checksum: int = 0x0000
 
-    def serialize(self, checksum=None) -> bytes:
+    def serialize(self, checksum: int | None = None) -> bytes:
         out = struct.pack(
             PACKET_FORMAT,
             0xAA if self.need_checksum else 0xAD,
@@ -144,7 +144,7 @@ class UIMessage:
         )
 
 
-def crc16(data: bytes, poly: int = 0xA001):
+def crc16(data: bytes, poly: int = 0xA001) -> int:
     crc = 0xFFFF
     for byte in data:
         crc ^= byte
@@ -157,11 +157,11 @@ server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 server.bind(('0.0.0.0', 8888))
 server.listen()
-clients = []
+clients: list[socket.socket] = []
 
 print("[*] Listening on port 8888...")
 
-def send_message(s, msg):
+def send_message(s: socket.socket, msg: UIMessage) -> None:
     serialized = msg.serialize()
     print(f'[*] Sending {msg} => {serialized.hex()}')
     s.send(serialized)
