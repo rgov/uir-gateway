@@ -75,7 +75,6 @@ class CANBitrate(enum.IntEnum):
 class UIMessage:
     device_id: int
     function_code: int
-    data_length: int
     data: bytes
     need_checksum: bool = True
     need_ack: bool = False
@@ -88,7 +87,7 @@ class UIMessage:
             0xAA if self.need_checksum else 0xAD,
             self.device_id,
             (int(self.need_ack) << 7) | int(self.function_code),
-            self.data_length,
+            len(self.data),
             self.data,
             self.aux_byte,
             checksum if checksum is not None else 0xFFFF,
@@ -117,6 +116,9 @@ class UIMessage:
         assert start_of_message in (0xAA, 0xAC, 0xAD)  # TODO: What is 0xAC?
         assert end_of_message == 0xCC
 
+        assert 0 <= data_length <= 8
+        data = data[:data_length]
+
         need_checksum = (start_of_message == 0xAA)
         need_ack = bool(control_word & 0x80)
 
@@ -127,7 +129,6 @@ class UIMessage:
         return UIMessage(
             device_id,
             function_code,
-            data_length,
             data,
             need_checksum,
             need_ack,
@@ -175,7 +176,6 @@ class UIDevice:
             send_message(transport, UIMessage(
                 device_id = self.node_id,
                 function_code = FunctionCode.MODEL,
-                data_length = 8,
                 data = (GatewayModel.UIM2523 + bytes([
                     0x00, 0x00,  # reserved
                     0x69, 0x7A,  # firmware version
@@ -186,9 +186,9 @@ class UIDevice:
         if msg.function_code == FunctionCode.PROTOCOL_PARAMETER:
             index = msg.data[0]
             if index == ProtocolParameter.CAN_BITRATE:
-                if msg.data_length == 1:
+                if len(msg.data) == 1:
                     print('[*] Responding to GET CAN BITRATE command')
-                elif msg.data_length == 2:
+                elif len(msg.data) == 2:
                     _, bitrate, = struct.unpack_from('<BB', msg.data)
                     print('[*] Set bitrate to', bitrate)  # TODO: user friendly
 
@@ -200,10 +200,9 @@ class UIDevice:
                 send_message(transport, UIMessage(
                     device_id = self.node_id,
                     function_code = FunctionCode.PROTOCOL_PARAMETER,
-                    data_length = 2,
                     data = bytes([
-                        ProtocolParameter.CAN_BITRATE, self.can_bitrate,
-                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+                        ProtocolParameter.CAN_BITRATE,
+                        self.can_bitrate
                     ])
                 ))
             else:
@@ -213,7 +212,7 @@ class UIDevice:
             if msg.need_ack:
                 print('[*] Responding to GET SERIAL NUMBER command')
             else:
-                assert msg.data_length == struct.calcsize('<L')
+                assert len(msg.data) == struct.calcsize('<L')
                 serial_number, = struct.unpack_from('<L', msg.data)
                 print('[*] Set serial number to', serial_number)
 
@@ -223,7 +222,6 @@ class UIDevice:
             send_message(transport, UIMessage(
                 device_id = self.node_id,
                 function_code = FunctionCode.SERIAL_NUMBER,
-                data_length = 8,
                 data = struct.pack(
                     '<LHH',
                     self.serial_number,
