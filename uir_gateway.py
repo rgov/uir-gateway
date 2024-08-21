@@ -24,10 +24,11 @@ class FunctionCode(enum.IntEnum):
 
 
 # Gateway device model numbers
-ML_UIM2513 = [0x19, 0x0D]
-ML_UIM2522 = [0x19, 0x16]
-ML_UIM2523 = [0x19, 0x17]
-ML_MMC90X  = [0x5A, 0x00]  # MMC901S, MMC901M, MMC902S, etc. - set second digit
+class GatewayModel(bytes, enum.Enum):
+    UIM2513 = [0x19, 0x0D]
+    UIM2522 = [0x19, 0x16]
+    UIM2523 = [0x19, 0x17]
+    MMC90X  = [0x5A, 0x00]  # MMC901S, MMC901M, MMC902S, etc. - set second digit
 
 # Gateway default node ID (<= 4)
 class GatewayNodeID(enum.IntEnum):
@@ -200,9 +201,11 @@ while True:
                 device_id = gateway_node_id,
                 function_code = FunctionCode.MODEL,
                 data_length = 8,
-                data = bytes(
-                    ML_UIM2523 + [0x00, 0x00, 0x69, 0x7A, 0x00, 0x00]
-                )
+                data = (GatewayModel.UIM2523 + bytes([
+                    0x00, 0x00,  # reserved
+                    0x69, 0x7A,  # firmware version
+                    0x00, 0x00,  # reserved
+                ]))
             ))
 
         if msg.function_code == FunctionCode.PROTOCOL_PARAMETER:
