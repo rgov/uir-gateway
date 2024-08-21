@@ -95,7 +95,7 @@ class UIMessage:
             0xCC
         )
 
-        if checksum is None and msg.need_checksum:
+        if checksum is None and self.need_checksum:
             checksum = crc16(out[1:-3])
             return self.serialize(checksum)
 
@@ -172,7 +172,7 @@ class UIDevice:
         if msg.function_code == FunctionCode.MODEL:
             print('[*] Responding to GET MODEL command')
             assert msg.need_ack
-            send_message(s, UIMessage(
+            send_message(transport, UIMessage(
                 device_id = self.node_id,
                 function_code = FunctionCode.MODEL,
                 data_length = 8,
@@ -197,7 +197,7 @@ class UIDevice:
                     print('[-] Invalid length on PP command, ignoring')
                     return
 
-                send_message(s, UIMessage(
+                send_message(transport, UIMessage(
                     device_id = self.node_id,
                     function_code = FunctionCode.PROTOCOL_PARAMETER,
                     data_length = 2,
@@ -208,7 +208,6 @@ class UIDevice:
                 ))
             else:
                 raise NotImplementedError(f'Protocol parameter {index} not implemented')
-
 
         if msg.function_code == FunctionCode.SERIAL_NUMBER:
             if msg.need_ack:
@@ -221,7 +220,7 @@ class UIDevice:
                 # Not documented, but I think we should acknowledge
                 print('[*] Acknowledging SET SERIAL NUMBER command')
 
-            send_message(s, UIMessage(
+            send_message(transport, UIMessage(
                 device_id = self.node_id,
                 function_code = FunctionCode.SERIAL_NUMBER,
                 data_length = 8,
