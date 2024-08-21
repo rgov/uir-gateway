@@ -1,3 +1,4 @@
+import enum
 import select
 import socket
 import struct
@@ -9,13 +10,18 @@ PACKET_FORMAT = '<BBBB8sBHB'
 PACKET_LENGTH = struct.calcsize(PACKET_FORMAT)
 assert PACKET_LENGTH == 16  # "The length of a UIMessage is fixed to 16 bytes."
 
+
 # Function codes (modulo ACK bit)
-FC_PROTOCOL_PARAMETER = 0x01
-FC_WAKE_NODE = 0x06  # Undocumented. Like `0A00`, sent to specified node
-FC_MODEL = 0x0B
-FC_SERIAL_NUMBER = 0x0C
-FC_ERROR_REPORT = 0x0F
-FC_SYSTEM_OPERATION = 0x7E
+class FunctionCode(enum.IntEnum):
+    PROTOCOL_PARAMETER = 0x01
+    MODEL = 0x0B
+    SERIAL_NUMBER = 0x0C
+    ERROR_REPORT = 0x0F
+    SYSTEM_OPERATION = 0x7E
+
+    # Undocumented but sent by StepEva-3. The data is `0A00`.
+    WAKE_NODE = 0x06
+
 
 # Gateway device model numbers
 ML_UIM2513 = [0x19, 0x0D]
@@ -24,37 +30,49 @@ ML_UIM2523 = [0x19, 0x17]
 ML_MMC90X  = [0x5A, 0x00]  # MMC901S, MMC901M, MMC902S, etc. - set second digit
 
 # Gateway default node ID (<= 4)
-ID_UIM2513 = 3
-ID_UIM2523 = 2
+class GatewayNodeID(enum.IntEnum):
+    UIM2513 = 3
+    UIM2523 = 2
 
 # Protocol parameter indices
-PP_RS232_BAUD = 1
-PP_CAN_BITRATE = 5
-PP_NODE_ID = 7
+class ProtocolParameter(enum.IntEnum):
+    RS232_BAUD = 1
+    CAN_BITRATE = 5
+    NODE_ID = 7
 
 # System operation subcommands
-SY_REBOOT = 1
-SY_RESTORE_FACTORY_DEFAULTS = 2
-SY_SYNC_TIME = 4  # Undocumented. Second byte is on/off.
+class SystemOperation(enum.IntEnum):
+    REBOOT = 1
+    RESTORE_FACTORY_DEFAULTS = 2
+
+    # Undocumented. Second data byte is on/off.
+    SYNC_TIME = 4
+
+    # XXX
+    # There is an undocumented SystemOperation message that is sent by
+    # SdkStartCanNet(UseConstLink=1). This described as "Debug Mode" in the
+    # manual. The message is sent to device ID 0xFF with a data length of 0.
 
 # RS-232 baud
-RB_4800 = 0
-RB_9600 = 1
-RB_19200 = 2
-RB_38400 = 3
-RB_57600 = 4
-RB_115200 = 5
+class RS232Baud(enum.IntEnum):
+    BAUD_4800 = 0
+    BAUD_9600 = 1
+    BAUD_19200 = 2
+    BAUD_38400 = 3
+    BAUD_57600 = 4
+    BAUD_115200 = 5
 
 # CAN bitrates
-CR_1000K = 0
-CR_800K = 1
-CR_500K = 2
-CR_250K = 3
-CR_125K = 4
+class CANBitrate(enum.IntEnum):
+    KBPS_1000 = 0
+    KBPS_800 = 1
+    KBPS_500 = 2
+    KBPS_250 = 3
+    KBPS_125 = 4
 
 
-gateway_node_id = ID_UIM2523
-can_bitrate = CR_500K
+gateway_node_id = GatewayNodeID.UIM2523
+can_bitrate = CANBitrate.KBPS_500
 serial_number = 1234512345
 manufacturer_id = 0x4141
 vendor_id = 0x4242
@@ -63,7 +81,7 @@ vendor_id = 0x4242
 @dataclass
 class Packet:
     device_id: int
-    function_code: int
+    function_code: int | FunctionCode
     data_length: int
     data: bytes
     need_checksum: bool = True
@@ -76,7 +94,7 @@ class Packet:
             PACKET_FORMAT,
             0xAA if self.need_checksum else 0xAD,
             self.device_id,
-            (int(self.need_ack) << 7) | self.function_code,
+            (int(self.need_ack) << 7) | int(self.function_code),
             self.data_length,
             self.data,
             self.aux_byte,
@@ -108,6 +126,9 @@ class Packet:
 
         need_checksum = (start_of_message == 0xAA)
         need_ack = bool(control_word & 0x80)
+
+        # Note: We don't convert this to a FunctionCode enum because it might
+        # not be a member of the subset we have defined.
         function_code = control_word & 0x7F
 
         return Packet(
@@ -172,21 +193,21 @@ while True:
             print(f'[*] Ignoring packet not addressed to us')
             continue
 
-        if packet.function_code == FC_MODEL:
+        if packet.function_code == FunctionCode.MODEL:
             print('[*] Responding to GET MODEL command')
             assert packet.need_ack
             write_packet(s, Packet(
                 device_id = gateway_node_id,
-                function_code = FC_MODEL,
+                function_code = FunctionCode.MODEL,
                 data_length = 8,
                 data = bytes(
                     ML_UIM2523 + [0x00, 0x00, 0x69, 0x7A, 0x00, 0x00]
                 )
             ))
 
-        if packet.function_code == FC_PROTOCOL_PARAMETER:
+        if packet.function_code == FunctionCode.PROTOCOL_PARAMETER:
             index = packet.data[0]
-            if index == PP_CAN_BITRATE:
+            if index == ProtocolParameter.CAN_BITRATE:
                 if packet.data_length == 1:
                     print('[*] Responding to GET CAN BITRATE command')
                 elif packet.data_length == 2:
@@ -200,10 +221,10 @@ while True:
 
                 write_packet(s, Packet(
                     device_id = gateway_node_id,
-                    function_code = FC_PROTOCOL_PARAMETER,
+                    function_code = FunctionCode.PROTOCOL_PARAMETER,
                     data_length = 2,
                     data = bytes([
-                        PP_CAN_BITRATE, can_bitrate,
+                        ProtocolParameter.CAN_BITRATE, can_bitrate,
                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00
                     ])
                 ))
@@ -211,7 +232,7 @@ while True:
                 raise NotImplementedError(f'Protocol parameter {index} not implemented')
 
 
-        if packet.function_code == FC_SERIAL_NUMBER:
+        if packet.function_code == FunctionCode.SERIAL_NUMBER:
             if packet.need_ack:
                 print('[*] Responding to GET SERIAL NUMBER command')
             else:
@@ -224,17 +245,8 @@ while True:
 
             write_packet(s, Packet(
                 device_id = gateway_node_id,
-                function_code = FC_SERIAL_NUMBER,
+                function_code = FunctionCode.SERIAL_NUMBER,
                 data_length = 8,
                 data = struct.pack('<LHH', serial_number, manufacturer_id,
                                     vendor_id)
             ))
-
-
-        if packet.function_code == FC_SYSTEM_OPERATION:
-            # XXX
-            # There is an undocumented SY packet where device_id = 0xFF and
-            # data_length = 0 when UseConstLink=1 via the API. This is described
-            # as "Debug Mode".
-
-            pass
