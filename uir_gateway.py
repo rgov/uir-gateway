@@ -74,7 +74,7 @@ class CANBitrate(enum.IntEnum):
 @dataclasses.dataclass
 class UIMessage:
     device_id: int
-    function_code: int | FunctionCode
+    function_code: int
     data_length: int
     data: bytes
     need_checksum: bool = True
@@ -155,7 +155,7 @@ def send_message(s: socket.socket, msg: UIMessage) -> None:
 class UIDevice:
     node_id: int
     group_ids: list[int] = dataclasses.field(default_factory=list)
-    can_bitrate: int | CANBitrate = CANBitrate.KBPS_500
+    can_bitrate: int = CANBitrate.KBPS_500
     serial_number: int = 1234512345
     manufacturer_id: int = 0x4141
     vendor_id: int = 0x4242
@@ -234,7 +234,7 @@ class UIDevice:
             ))
 
 
-def main():
+def main() -> None:
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(('0.0.0.0', 8888))
