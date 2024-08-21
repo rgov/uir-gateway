@@ -62,14 +62,14 @@ vendor_id = 0x4242
 
 @dataclass
 class Packet:
-    need_checksum: bool
     device_id: int
-    need_ack: bool
     function_code: int
     data_length: int
     data: bytes
-    aux_byte: int
-    checksum: int
+    need_checksum: bool = True
+    need_ack: bool = False
+    aux_byte: int = 0x00
+    checksum: int = 0x0000
 
 def crc16(data: bytes, poly: int = 0xA001):
     crc = 0xFFFF
@@ -99,12 +99,12 @@ def parse_packet(packet_bytes: bytes):
     function_code = control_word & 0x7F
 
     return Packet(
-        need_checksum,
         device_id,
-        need_ack,
         function_code,
         data_length,
         data,
+        need_checksum,
+        need_ack,
         aux_byte,
         checksum
     )
@@ -175,16 +175,12 @@ while True:
             print('[*] Responding to GET MODEL command')
             assert packet.need_ack
             write_packet(s, Packet(
-                need_checksum = True,
                 device_id = gateway_node_id,
-                need_ack = False,
                 function_code = FC_MODEL,
                 data_length = 8,
                 data = bytes(
                     ML_UIM2523 + [0x00, 0x00, 0x69, 0x7A, 0x00, 0x00]
-                ),
-                aux_byte = 0x00,
-                checksum = 0xFF
+                )
             ))
 
         if packet.function_code == FC_PROTOCOL_PARAMETER:
@@ -202,17 +198,13 @@ while True:
                     continue
 
                 write_packet(s, Packet(
-                    need_checksum = True,
                     device_id = gateway_node_id,
-                    need_ack = False,
                     function_code = FC_PROTOCOL_PARAMETER,
                     data_length = 2,
                     data = bytes([
                         PP_CAN_BITRATE, can_bitrate,
                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-                    ]),
-                    aux_byte = 0x00,
-                    checksum = 0xFF
+                    ])
                 ))
             else:
                 raise NotImplementedError(f'Protocol parameter {index} not implemented')
@@ -230,15 +222,11 @@ while True:
                 print('[*] Acknowledging SET SERIAL NUMBER command')
 
             write_packet(s, Packet(
-                need_checksum = True,
                 device_id = gateway_node_id,
-                need_ack = False,
                 function_code = FC_SERIAL_NUMBER,
                 data_length = 8,
                 data = struct.pack('<LHH', serial_number, manufacturer_id,
-                                    vendor_id),
-                aux_byte = 0x00,
-                checksum = 0xFF
+                                    vendor_id)
             ))
 
 
