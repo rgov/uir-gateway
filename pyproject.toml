@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "uir"
+description = "Network Bridge for UIROBOT Stepper Motors"
+dynamic = ["version"]
+
+authors = [
+  { name = "Ryan Govostes", email = "rgovostes@gmail.com" },
+]
+
+readme = "README.md"
+license = {file = "LICENSE.txt"}
+
+requires-python = ">=3.10"
+dependencies = [
+  "python-can[serial]<5"
+]
+
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python"
+]
+
+
+[project.urls]
+Homepage = "https://github.com/rgov/uir-gateway"
+Repository = "https://github.com/rgov/uir-gateway.git"
+"Bug Tracker" = "https://github.com/rgov/uir-gateway/issues"
+
+
+[project.scripts]
+uir = "uir:main"
