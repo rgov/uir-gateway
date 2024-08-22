@@ -33,4 +33,4 @@ Repository = "https://github.com/rgov/uir-gateway.git"
 
 
 [project.scripts]
-uir-gateway = "uir.gateway:sync_main"
+uir-gateway = "uir.util.gateway:sync_main"
