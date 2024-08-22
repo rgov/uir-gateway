@@ -1,11 +1,79 @@
 #!/usr/bin/env python
 import asyncio
-import functools
+import dataclasses
 import typing
 
 import can
 
 from . import crc16, GatewayNodeID, UIDevice, UIMessage
+
+
+@dataclasses.dataclass
+class SimpleCANIdentifier:
+    '''
+    The SimpleCAN3.0 protocol packs fields into the message's Arbitration ID
+    according to the following scheme. (A color-coded diagram is also available
+    in the UIM342 manual.)
+
+                          Producer ID          Control
+                       low bits  high bits      Word
+                        ,-'         ,-'           '-,
+                        v           v               v
+                      ppppp ccccc 0 PP CC 000000 wwwwwwww
+                              ^        ^
+                            ,-'      ,-'
+                        low bits  high bits
+                           Consumer ID
+
+    The Arbitration ID itself is split across two fields of the CAN message, the
+    Standard Identifier (SID; 11 bits) and Extended Identifier (EID; 18 bits).
+
+                          Standard       Extended
+                         Identifier     Identifier
+                           ,-'            ,-'
+                           v              v
+                      sssssssssss eeeeeeeeeeeeeeeeee
+                      pppppccccc0 PPCC000000wwwwwwww
+
+    Because Python supports arbitrary-precision integers, we can pack and unpack
+    the Arbitration ID directly.
+    '''
+
+    producer_id: int
+    consumer_id: int
+    control_word: int
+
+    @property
+    def arbitration_id(self) -> int:
+        p_lo = self.producer_id & 0x1F
+        p_hi = (self.producer_id >> 5) & 0x03
+        c_lo = self.consumer_id & 0x1F
+        c_hi = (self.consumer_id >> 5) & 0x03
+
+        return (
+            (p_lo << 24) | (c_lo << 19) |
+            (p_hi << 16) | (c_hi << 14) |
+            (self.control_word & 0xFF)
+        )
+
+    @classmethod
+    def from_arbitration_id(cls, aid: int) -> 'SimpleCANIdentifier':
+        p_lo = (aid >> 24) & 0x1F
+        c_lo = (aid >> 19) & 0x1F
+        p_hi = (aid >> 16) & 0x03
+        c_hi = (aid >> 14) & 0x03
+
+        return SimpleCANIdentifier(
+            producer_id=(p_hi << 5) | p_lo,
+            consumer_id=(c_hi << 5) | c_lo,
+            control_word=aid & 0xFF
+        )
+
+
+# All CAN messages sent from the "user master controller" are to use ID = 4,
+# according to the manual.
+MASTER_PRODUCER_ID = 4
+
 
 
 gateway = UIDevice(
@@ -31,18 +99,12 @@ class Socketlike:
 
 
 def on_can_message(msg: can.Message) -> None:
-    # Split the arbitration ID into SID and EID
-    eid = msg.arbitration_id & ((1<<18)-1)
-    sid = msg.arbitration_id >> 18
-
-    # Extract the sender's node ID. Note! The UIM342 manual has an invalid
-    # formula for this.
-    sender_id = ((eid >> 11) & 0x0060) | ((sid >> 6) & 0x001F)
+    # Extract fields from the arbitration ID
+    msg_id = SimpleCANIdentifier.from_arbitration_id(msg.arbitration_id)
 
     # Extract the control word and function code
-    control_word = eid & 0xFF
-    need_ack = bool(control_word & 0x80)
-    function_code = control_word & 0x7F
+    need_ack = bool(msg_id.control_word & 0x80)
+    function_code = msg_id.control_word & 0x7F
 
     # Extract the data
     assert 0 <= msg.dlc <= 8
@@ -50,7 +112,7 @@ def on_can_message(msg: can.Message) -> None:
 
     # Reconstitute as a UIMessage
     tcp_msg = UIMessage(
-        device_id=sender_id,
+        device_id=msg_id.producer_id,
         function_code=function_code,
         data=data,
         need_ack=need_ack
@@ -87,15 +149,16 @@ async def tcp_server(reader, writer):
 
             # Compute the SID and EID components of the arbitration ID according
             # to UIM342 scheme, see manual section "Direct CAN Communication".
-            sid = ((msg.device_id << 1) & 0x003F)
-            eid = (((msg.device_id << 1) & 0x00C0) << 8)
-            eid |= int(msg.need_ack) << 7
-            eid |= msg.function_code
+            msg_id = SimpleCANIdentifier(
+                producer_id=MASTER_PRODUCER_ID,
+                consumer_id=msg.device_id,
+                control_word=(int(msg.need_ack) << 7) | msg.function_code
+            )
             
             # Forward the message to the CAN bus
             can_bus.send(can.Message(
                 is_extended_id=True,
-                arbitration_id=(sid << 18) | eid,
+                arbitration_id=msg_id.arbitration_id,
                 dlc=len(msg.data),
                 data=msg.data
             ))
