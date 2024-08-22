@@ -13,6 +13,8 @@ This Python package partially implements the protocols for communicating with [U
 
 The included `uir-gateway` tool emulates a [UIM2523][] TCP-CAN bus gateway for communicating with UIM342 Servo Stepper Motors using any interface supported by [python-can][], such as the [CANable][] USB adapter.
 
+Using this gateway, you can use the UIROBOT StepEva3 application to control an attached motor.
+
 First, install the `uir` package to a virtual environment. Set the [python-can configuration environment variables][python-can-env], then run the `uir-gateway` tool.
 
     export CAN_INTERFACE=slcan
